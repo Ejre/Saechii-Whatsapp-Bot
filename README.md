@@ -22,7 +22,7 @@ Saechii-Whatsapp-Bot is a feature-rich WhatsApp bot built using [Baileys](https:
 
 1.  **Clone the repository** (or download the source code):
     ```bash
-    git clone https://github.com/yourusername/Saechii-Whatsapp-Bot.git
+    git clone https://github.com/Ejre/Saechii-Whatsapp-Bot.git
     cd Saechii-Whatsapp-Bot
     ```
 
@@ -76,3 +76,4 @@ Contributions are welcome! Feel free to open issues or pull requests to improve 
 ## 📝 License
 
 This project is licensed under the ISC License.
+
