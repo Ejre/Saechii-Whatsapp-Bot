@@ -1,0 +1,11 @@
+{
+    "ignore": [
+        "auth_info/*",
+        ".wwebjs_auth/*",
+        ".wwebjs_cache/*",
+        "rvo_media/*",
+        "node_modules",
+        "warnings.json"
+    ],
+    "ext": "js,json"
+}
