@@ -9,6 +9,7 @@ import path from 'path'
 // Cache & State
 const messageCache = new Map()
 const autoAiUsers = new Set()
+const userConversations = new Map() // { userId: ["User: msg", "AI: msg"] }
 
 export async function handleMessage(sock, msg) {
     if (!msg.message) return
@@ -37,14 +38,14 @@ export async function handleMessage(sock, msg) {
     if (text.startsWith('.p') || text.startsWith('.tagall') || text.startsWith('.h')) return handleTagAll(sock, from, msg, text)
     if (text.startsWith('!ai ')) {
         if (sender === botNumber) return
-        return handleAi(sock, from, msg, text.replace("!ai ", ""))
+        return handleAi(sock, from, msg, text.replace("!ai ", ""), sender, false) // One-shot, no memory
     }
     if (text.startsWith('!autoai')) return handleAutoAi(sock, from, msg, text, sender)
 
     // Auto AI Response Logic
-    if (autoAiUsers.has(sender) && sender !== botNumber && !text.startsWith('.')) {
-        // Jika bukan command (awalan .), anggap chat biasa ke AI
-        return handleAi(sock, from, msg, text)
+    if (text && autoAiUsers.has(sender) && sender !== botNumber && !text.startsWith('.')) {
+        // Continuous conversation with memory
+        return handleAi(sock, from, msg, text, sender, true)
     }
 
     if (text.startsWith('.dl')) return handleInstagramDl(sock, from, msg, text)
@@ -54,78 +55,56 @@ export async function handleMessage(sock, msg) {
     if (text === '.del') return handleDelete(sock, from, msg)
 }
 
-// =========================
-// Command Handlers
-// =========================
+// ... existing handlers ...
 
-async function handleMenu(sock, from, msg) {
-    const menuText = `
-*${BOT_NAME} Menu*
+async function handleAi(sock, from, msg, query, sender, useMemory = false) {
+    // 1. Build Context from Memory
+    let fullQuery = query
+    if (useMemory) {
+        if (!userConversations.has(sender)) {
+            userConversations.set(sender, [])
+        }
+        const history = userConversations.get(sender)
+        history.push(`User: ${query}`)
 
-1. .menu → Tampilkan menu ini
-2. .ping → Cek bot aktif
-3. .tagall / .p / .h <pesan> → Mention semua anggota
-4. !ai <teks> → Tanya AI
-5. !autoai enable/disable → Mode ngobrol AI
-6. .rvo → Buka pesan View Once (reply)
-7. .del → Hapus pesan bot (reply)
-8. .s → Buat stiker (reply gambar/video)
-9. .dl <link> → Instagram Downloader
-10. .yt <link> → YouTube Video Downloader
-    `
-    await sock.sendMessage(from, { text: menuText }, { quoted: msg })
-}
-
-async function handlePing(sock, from, msg) {
-    await sock.sendMessage(from, { text: "🏓 Pong! Bot aktif." }, { quoted: msg })
-}
-
-async function handleTagAll(sock, from, msg, text) {
-    // 1. Cek apakah ini Grup?
-    if (!from.endsWith('@g.us')) {
-        await sock.sendMessage(from, { text: "⚠️ Fitur ini hanya bisa digunakan di dalam grup!" }, { quoted: msg })
-        return
-    }
-
-    try {
-        const metadata = await sock.groupMetadata(from)
-        const participants = metadata.participants.map(p => p.id)
-
-        // Cek apakah command .h (hidden tag dengan pesan custom) atau tagall biasa
-        let pesan = ""
-        if (text.startsWith('.h')) {
-            pesan = text.slice(2).trim()
-        } else if (text === '.p' || text === '.tagall') {
-            pesan = ""
+        // Limit to last 10 messages
+        if (history.length > 10) {
+            userConversations.set(sender, history.slice(-10))
         }
 
-        // Jika .p, tampilkan list di text, jika .h hanya text biasa tapi mention all
-        if (text === '.p') {
-            await sock.sendMessage(from, {
-                text: participants.map(u => `@${u.split('@')[0]}`).join('\n'),
-                mentions: participants
-            }, { quoted: msg })
-        } else {
-            await sock.sendMessage(from, {
-                text: pesan || "Tag All", // Default text jika kosong
-                mentions: participants
-            }, { quoted: msg })
-        }
-    } catch (err) {
-        console.error("TagAll Error:", err)
-        await sock.sendMessage(from, { text: "❌ Gagal mengambil info grup (pastikan bot ada di grup)." }, { quoted: msg })
+        const context = userConversations.get(sender).join("\n")
+        fullQuery = `${context}\nRespond to the latest message.`
     }
-}
 
-async function handleAi(sock, from, msg, query) {
-    const fullQuery = "Jawablah seperti karakter anime perempuan dengan sifat tsundere, gunakan bahasa indonesia yang malu-malu, agak ragu, dan tambahkan emotikon seperti (>///<) atau ///. " + query
-    const apiUrl = `https://api.botcahx.eu.org/api/search/blackbox-chat?text=${encodeURIComponent(fullQuery)}&apikey=${API_KEY}`
+    // 2. Persona Prompt (Shirokane Rinko)
+    const prompt = `Jawablah sebagai Shirokane Rinko dari BanG Dream! Sifatmu pemalu, sopan, lembut, dan sering ragu-ragu saat berbicara. Gunakan kata-kata pengisi seperti 'ano...', 'et-to...', atau 'uuh...' di awal kalimat untuk menunjukkan keraguan. Gunakan bahasa Indonesia yang sopan dan natural, jangan kaku atau baku seperti robot. Kamu suka bermain piano dan game online (Neo Fantasy Online). Jangan gunakan awalan 'AI:', 'Rinko:', atau 'Bot:' dalam responmu. Jika membahas game, kamu bisa sedikit lebih bersemangat tapi tetap sopan. ${fullQuery}`
+
+    const apiUrl = `https://api.botcahx.eu.org/api/search/blackbox-chat?text=${encodeURIComponent(prompt)}&apikey=${API_KEY}`
 
     try {
         const res = await fetch(apiUrl)
         const data = await res.json()
+
         if (data.status) {
-            await sock.sendMessage(from, { text: data.message }, { quoted: msg })
+            let response = data.message
+
+            // 3. Clean up prefixes
+            const prefixes = ["AI:", "Rinko:", "Bot:", "Shirokane Rinko:"]
+            for (const prefix of prefixes) {
+                if (response.startsWith(prefix)) {
+                    response = response.slice(prefix.length).trim()
+                } else if (response.toLowerCase().startsWith(prefix.toLowerCase())) {
+                    response = response.slice(prefix.length).trim()
+                }
+            }
+
+            // 4. Save AI response to memory
+            if (useMemory) {
+                const history = userConversations.get(sender)
+                history.push(`AI: ${response}`)
+            }
+
+            await sock.sendMessage(from, { text: response }, { quoted: msg })
         } else {
             await sock.sendMessage(from, { text: "⚠️ Gagal dapat respons dari API AI." }, { quoted: msg })
         }
@@ -136,13 +115,28 @@ async function handleAi(sock, from, msg, query) {
 }
 
 async function handleAutoAi(sock, from, msg, text, sender) {
-    const user = sender
-    if (text === "!autoai enable") {
-        autoAiUsers.add(user)
-        await sock.sendMessage(from, { text: "✅ AutoAI diaktifkan untukmu." }, { quoted: msg })
-    } else if (text === "!autoai disable") {
-        autoAiUsers.delete(user)
-        await sock.sendMessage(from, { text: "❌ AutoAI dimatikan untukmu." }, { quoted: msg })
+    if (text === "!autoai on" || text === "!autoai enable") {
+        if (autoAiUsers.has(sender)) {
+            await sock.sendMessage(from, { text: "ℹ️ Auto-AI sudah aktif untukmu!" }, { quoted: msg })
+        } else {
+            autoAiUsers.add(sender)
+            userConversations.set(sender, []) // Initialize memory
+            await sock.sendMessage(from, {
+                text: "✅ **Auto-AI mode activated!**\nSekarang saya akan merespon semua pesan kamu tanpa perlu `!ai`.\nKetik `!autoai off` untuk mematikan."
+            }, { quoted: msg })
+        }
+    } else if (text === "!autoai off" || text === "!autoai disable") {
+        if (autoAiUsers.has(sender)) {
+            autoAiUsers.delete(sender)
+            userConversations.delete(sender) // Reset memory
+            await sock.sendMessage(from, {
+                text: "❌ **Auto-AI mode deactivated!**\nMemori percakapan telah direset."
+            }, { quoted: msg })
+        } else {
+            await sock.sendMessage(from, { text: "ℹ️ Auto-AI memang belum aktif." }, { quoted: msg })
+        }
+    } else {
+        await sock.sendMessage(from, { text: "⚠️ Gunakan `!autoai on` atau `!autoai off`." }, { quoted: msg })
     }
 }
 
