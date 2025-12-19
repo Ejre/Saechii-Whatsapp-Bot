@@ -35,7 +35,8 @@ export async function handleMessage(sock, msg) {
     // 2. Command Dispatcher
     if (text === '.menu') return handleMenu(sock, from, msg)
     if (text === '.ping') return handlePing(sock, from, msg)
-    if (text.startsWith('.p') || text.startsWith('.tagall') || text.startsWith('.h')) return handleTagAll(sock, from, msg, text)
+    if (text.startsWith('.tagall')) return handleTagAll(sock, from, msg, text)
+    if (text.startsWith('.h')) return handleH(sock, from, msg, text)
     if (text.startsWith('!ai ')) {
         if (sender === botNumber) return
         return handleAi(sock, from, msg, text.replace("!ai ", ""), sender, false) // One-shot, no memory
@@ -369,5 +370,72 @@ async function handleDelete(sock, from, msg) {
     } catch (err) {
         console.error("Delete Error:", err)
         await sock.sendMessage(from, { text: "❌ Gagal menghapus pesan." }, { quoted: msg })
+    }
+}
+
+async function handleMenu(sock, from, msg) {
+    const menuText = `🤖 *Saechii Bot Menu* 🤖
+
+📌 *List Command:*
+.menu - Tampilkan menu ini
+.ping - Cek status bot
+.tagall - Tag semua member (visible text)
+.h [teks] - Tag semua member (hidetag/invisible text)
+.s - Buat sticker dari gambar/video
+.dl [link] - Download Instagram/Reels
+.yt [link] - Download YouTube
+.rvo - Baca pesan view once
+.del - Hapus pesan bot
+!ai [tanya] - Tanya AI (satu kali)
+!autoai on/off - Mode chat otomatis AI
+
+_Created by Ezra_`
+    await sock.sendMessage(from, { text: menuText }, { quoted: msg })
+}
+
+async function handlePing(sock, from, msg) {
+    await sock.sendMessage(from, { text: "🏓 Pong!" }, { quoted: msg })
+}
+
+async function handleTagAll(sock, from, msg, text) {
+    if (!from.endsWith('@g.us')) {
+        await sock.sendMessage(from, { text: "❌ Hanya bisa digunakan di grup!" }, { quoted: msg })
+        return
+    }
+    const groupMetadata = await sock.groupMetadata(from)
+    const participants = groupMetadata.participants
+
+    let messageText = "📢 *Tag All*\n\n"
+    for (let participant of participants) {
+        messageText += `@${participant.id.split('@')[0]}\n`
+    }
+
+    await sock.sendMessage(from, {
+        text: messageText,
+        mentions: participants.map(p => p.id)
+    }, { quoted: msg })
+}
+
+async function handleH(sock, from, msg, text) {
+    if (!from.endsWith('@g.us')) {
+        await sock.sendMessage(from, { text: "❌ Hanya bisa digunakan di grup!" }, { quoted: msg })
+        return
+    }
+    try {
+        const groupMetadata = await sock.groupMetadata(from)
+        const participants = groupMetadata.participants
+
+        // Ambil text setelah .h 
+        // ".h woi" -> "woi"
+        // ".h" -> ""
+        let q = text.slice(2).trim()
+
+        await sock.sendMessage(from, {
+            text: q,
+            mentions: participants.map(p => p.id)
+        })
+    } catch (e) {
+        console.error("Hidetag error:", e)
+        await sock.sendMessage(from, { text: "❌ Gagal hidetag." }, { quoted: msg })
     }
 }
