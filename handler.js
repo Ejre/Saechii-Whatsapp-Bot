@@ -14,6 +14,17 @@ const userConversations = new Map() // { userId: ["User: msg", "AI: msg"] }
 export async function handleMessage(sock, msg) {
     if (!msg.message) return
 
+    // 0. Filter Pesan Lama (Anti-Spam saat baru nyala)
+    // Jika pesan lebih tua dari 2 menit (120000ms), abaikan.
+    // msg.messageTimestamp biasanya dalam detik.
+    const messageTime = (typeof msg.messageTimestamp === 'number' ? msg.messageTimestamp : msg.messageTimestamp.low || msg.messageTimestamp) * 1000
+    const timeDiff = Date.now() - messageTime
+
+    if (timeDiff > 2 * 60 * 1000) {
+        // console.log(`[IGNORE] Pesan lama diabaikan: ${timeDiff}ms`)
+        return
+    }
+
     // Simpan pesan ke cache untuk fitur sticker/reply
     messageCache.set(msg.key.id, msg)
 
