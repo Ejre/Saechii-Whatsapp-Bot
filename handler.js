@@ -226,7 +226,7 @@ async function handleSoundCloudDl(sock, from, msg, text) {
         const data = await res.json()
 
         if (!data.status || !data.result) {
-            await sock.sendMessage(from, { text: "❌ Gagal download lagu SoundCloud." }, { quoted: msg })
+            await sock.sendMessage(from, { text: `❌ Gagal download lagu SoundCloud.\nMsg: ${data.message || 'No result'}` }, { quoted: msg })
             return
         }
 
@@ -295,25 +295,42 @@ async function handleTwitterDl(sock, from, msg, text) {
         const res = await fetch(apiUrl)
         const data = await res.json()
 
+
+
         if (!data.status || !data.result) {
-            await sock.sendMessage(from, { text: "❌ Gagal download media Twitter (mungkin private atau API error)." }, { quoted: msg })
+            await sock.sendMessage(from, { text: `❌ Gagal download media Twitter.\nMsg: ${data.message || 'No result'}` }, { quoted: msg })
             return
         }
 
         // Result biasanya array of objects { url: "..." } or single object
         const result = data.result
 
-        // Cek jika result ada 'urls' atau array langsung
-        // Struktur umum twitter downloader: result: [{ url: '...', quality: '...', type: 'mp4' }]
-        // Asumsi result mengandung array url atau single url object.
-
         let mediaUrls = []
-        if (Array.isArray(result)) {
-            mediaUrls = result
-        } else if (result.url) {
-            mediaUrls = [result]
-        } else if (result.urls) {
-            mediaUrls = result.urls
+
+        // KASUS 1: result.url adalah Array of Objects [{hd: 'url'}, {sd: 'url'}]
+        if (result.url && Array.isArray(result.url)) {
+            const hd = result.url.find(item => item.hd)
+            const sd = result.url.find(item => item.sd)
+            if (hd) mediaUrls.push({ url: hd.hd, type: 'video' })
+            else if (sd) mediaUrls.push({ url: sd.sd, type: 'video' })
+            else {
+                // Fallback: ambil value pertama dari object apapun di array
+                mediaUrls.push({ url: Object.values(result.url[0])[0], type: 'video' })
+            }
+        }
+        // KASUS 2: result.url adalah String
+        else if (typeof result.url === 'string') {
+            mediaUrls.push({ url: result.url, type: 'unknown' }) // We'll detect later
+        }
+        // KASUS 3: result adalah Array (misal slide images)
+        else if (Array.isArray(result)) {
+            result.forEach(item => {
+                if (item.url) mediaUrls.push({ url: item.url, type: 'unknown' })
+            })
+        }
+        // KASUS 4: result.urls field
+        else if (result.urls && Array.isArray(result.urls)) {
+            result.urls.forEach(u => mediaUrls.push({ url: u, type: 'unknown' }))
         }
 
         if (mediaUrls.length === 0) {
@@ -322,14 +339,14 @@ async function handleTwitterDl(sock, from, msg, text) {
         }
 
         for (let item of mediaUrls) {
-            // Prioritize HD/Highest quality if multiple
-            const mediaUrl = item.url ? item.url : item
+            const mediaUrl = item.url
+            const caption = result.title || "Twitter Media"
 
-            // Simple detection: check extension or try to send as video first
-            if (mediaUrl.includes('.mp4')) {
-                await sock.sendMessage(from, { video: { url: mediaUrl }, caption: "Twitter Video" }, { quoted: msg })
+            // Check extension or specified type
+            if (item.type === 'video' || mediaUrl.includes('.mp4')) {
+                await sock.sendMessage(from, { video: { url: mediaUrl }, caption: caption }, { quoted: msg })
             } else {
-                await sock.sendMessage(from, { image: { url: mediaUrl }, caption: "Twitter Image" }, { quoted: msg })
+                await sock.sendMessage(from, { image: { url: mediaUrl }, caption: caption }, { quoted: msg })
             }
         }
 
@@ -354,28 +371,33 @@ async function handleYoutubeDl(sock, from, msg, text) {
         return
     }
 
+    // Menggunakan API YouTube Botcahx (lebih stabil daripada direct ytdl)
+    const apiUrl = `https://api.botcahx.eu.org/api/dowloader/yt?url=${encodeURIComponent(url)}&apikey=${API_KEY}`
+
     try {
-        await sock.sendMessage(from, { text: "⏳ Sedang memproses video... (Mengambil kualitas terbaik)" }, { quoted: msg })
+        await sock.sendMessage(from, { text: "⏳ Sedang memproses video YouTube..." }, { quoted: msg })
 
-        if (!ytdl.validateURL(url)) {
-            await sock.sendMessage(from, { text: "❌ Link YouTube tidak valid." }, { quoted: msg })
+        const res = await fetch(apiUrl)
+        const data = await res.json()
+
+        if (!data.status || !data.result) {
+            await sock.sendMessage(from, { text: `❌ Gagal download YouTube.\nMsg: ${data.message || 'No result'}` }, { quoted: msg })
             return
         }
 
-        const info = await ytdl.getInfo(url)
-        // Pilih format mp4 yang ada video+audio dengan kualitas tertinggi (biasanya 360p-720p untuk single file)
-        const format = ytdl.chooseFormat(info.formats, { quality: 'highest', filter: 'audioandvideo' })
+        // Result biasanya { title: "...", thumb: "...", mp4: "..." }
+        const result = data.result
+        const videoUrl = result.mp4 || result.url
+        const title = result.title || "YouTube Video"
 
-        if (!format || !format.url) {
-            await sock.sendMessage(from, { text: "❌ Gagal mendapatkan link video." }, { quoted: msg })
+        if (!videoUrl) {
+            await sock.sendMessage(from, { text: "❌ Gagal mendapatkan link video dari API." }, { quoted: msg })
             return
         }
-
-        const title = info.videoDetails.title || "YouTube Video"
 
         await sock.sendMessage(from, {
-            video: { url: format.url },
-            caption: `🎬 ${title}\n📊 Quality: ${format.qualityLabel || 'Unknown'}`,
+            video: { url: videoUrl },
+            caption: `🎬 ${title}`,
             mimetype: 'video/mp4'
         }, { quoted: msg })
 
