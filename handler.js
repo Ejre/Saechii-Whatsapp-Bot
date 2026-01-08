@@ -60,7 +60,9 @@ export async function handleMessage(sock, msg) {
         return handleAi(sock, from, msg, text, sender, true)
     }
 
-    if (text.startsWith('.dl')) return handleInstagramDl(sock, from, msg, text)
+    if (text.startsWith('.ig') || text.startsWith('.instagram')) return handleInstagramDl(sock, from, msg, text)
+    if (text.startsWith('.sc') || text.startsWith('.soundcloud')) return handleSoundCloudDl(sock, from, msg, text)
+    if (text.startsWith('.tw') || text.startsWith('.twitter') || text.startsWith('.x')) return handleTwitterDl(sock, from, msg, text)
     if (text.startsWith('.yt')) return handleYoutubeDl(sock, from, msg, text)
     if (text === '.rvo') return handleRvo(sock, from, msg)
     if (text === '.s') return handleSticker(sock, from, msg)
@@ -163,7 +165,7 @@ async function handleInstagramDl(sock, from, msg, text) {
     }
 
     if (!url) {
-        await sock.sendMessage(from, { text: "⚠️ Harap sertakan link atau reply pesan yang berisi link.\nContoh: .dl https://instagram.com/reel/xxx" }, { quoted: msg })
+        await sock.sendMessage(from, { text: "⚠️ Harap sertakan link atau reply pesan yang berisi link.\nContoh: .ig https://instagram.com/reel/xxx" }, { quoted: msg })
         return
     }
 
@@ -197,6 +199,143 @@ async function handleInstagramDl(sock, from, msg, text) {
     } catch (err) {
         console.error("IG DL Error:", err)
         await sock.sendMessage(from, { text: "❌ Error saat mencoba download Instagram." }, { quoted: msg })
+    }
+}
+
+async function handleSoundCloudDl(sock, from, msg, text) {
+    let url
+    // Cek reply atau argument
+    if (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+        const quoted = msg.message.extendedTextMessage.contextInfo.quotedMessage
+        url = quoted.conversation || quoted.extendedTextMessage?.text
+    } else {
+        url = text.split(' ')[1]
+    }
+
+    if (!url) {
+        await sock.sendMessage(from, { text: "⚠️ Harap sertakan link SoundCloud.\nContoh: .sc https://soundcloud.com/xxx/xxx" }, { quoted: msg })
+        return
+    }
+
+    const apiUrl = `https://api.botcahx.eu.org/api/download/soundcloud?url=${encodeURIComponent(url)}&apikey=${API_KEY}`
+
+    try {
+        await sock.sendMessage(from, { text: "⏳ Sedang memproses lagu..." }, { quoted: msg })
+
+        const res = await fetch(apiUrl)
+        const data = await res.json()
+
+        if (!data.status || !data.result) {
+            await sock.sendMessage(from, { text: "❌ Gagal download lagu SoundCloud." }, { quoted: msg })
+            return
+        }
+
+        const result = data.result
+        // API Botcahx SoundCloud response structure check during runtime if needed, 
+        // usually it contains title, audio url, etc.
+        // As per screenshot: path /api/download/soundcloud, method GET. 
+        // We assume 'result' contains the direct download link or an object with title and url.
+        // Common pattern for this API provider: result: { title: "...", url: "...", ... } or just result containing the info.
+
+        // Let's assume standard object return based on other endpoints from this provider
+        const audioUrl = result.url || result.link
+        const title = result.title || "SoundCloud Audio"
+        const thumbnail = result.thumbnail || result.image
+
+        if (!audioUrl) {
+            await sock.sendMessage(from, { text: "❌ Gagal mendapatkan link audio." }, { quoted: msg })
+            return
+        }
+
+        await sock.sendMessage(from, {
+            audio: { url: audioUrl },
+            mimetype: 'audio/mpeg',
+            fileName: `${title}.mp3`,
+            contextInfo: {
+                externalAdReply: {
+                    title: title,
+                    body: "SoundCloud Downloader",
+                    thumbnailUrl: thumbnail ? thumbnail : "https://soundcloud.com/favicon.ico",
+                    sourceUrl: url,
+                    mediaType: 1,
+                    renderLargerThumbnail: true
+                }
+            }
+        }, { quoted: msg })
+
+    } catch (err) {
+        console.error("SoundCloud DL Error:", err)
+        await sock.sendMessage(from, { text: `❌ Terjadi kesalahan: ${err.message}` }, { quoted: msg })
+    }
+}
+
+
+
+async function handleTwitterDl(sock, from, msg, text) {
+    let url
+    // Cek reply atau argument
+    if (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage) {
+        const quoted = msg.message.extendedTextMessage.contextInfo.quotedMessage
+        url = quoted.conversation || quoted.extendedTextMessage?.text
+    } else {
+        url = text.split(' ')[1]
+    }
+
+    if (!url) {
+        await sock.sendMessage(from, { text: "⚠️ Harap sertakan link Twitter/X.\nContoh: .tw https://x.com/xxx/status/xxx" }, { quoted: msg })
+        return
+    }
+
+    // Menggunakan API Twitter Botcahx
+    const apiUrl = `https://api.botcahx.eu.org/api/download/twitter?url=${encodeURIComponent(url)}&apikey=${API_KEY}`
+
+    try {
+        await sock.sendMessage(from, { text: "⏳ Sedang memproses media Twitter..." }, { quoted: msg })
+
+        const res = await fetch(apiUrl)
+        const data = await res.json()
+
+        if (!data.status || !data.result) {
+            await sock.sendMessage(from, { text: "❌ Gagal download media Twitter (mungkin private atau API error)." }, { quoted: msg })
+            return
+        }
+
+        // Result biasanya array of objects { url: "..." } or single object
+        const result = data.result
+
+        // Cek jika result ada 'urls' atau array langsung
+        // Struktur umum twitter downloader: result: [{ url: '...', quality: '...', type: 'mp4' }]
+        // Asumsi result mengandung array url atau single url object.
+
+        let mediaUrls = []
+        if (Array.isArray(result)) {
+            mediaUrls = result
+        } else if (result.url) {
+            mediaUrls = [result]
+        } else if (result.urls) {
+            mediaUrls = result.urls
+        }
+
+        if (mediaUrls.length === 0) {
+            await sock.sendMessage(from, { text: "❌ Tidak ada media yang ditemukan." }, { quoted: msg })
+            return
+        }
+
+        for (let item of mediaUrls) {
+            // Prioritize HD/Highest quality if multiple
+            const mediaUrl = item.url ? item.url : item
+
+            // Simple detection: check extension or try to send as video first
+            if (mediaUrl.includes('.mp4')) {
+                await sock.sendMessage(from, { video: { url: mediaUrl }, caption: "Twitter Video" }, { quoted: msg })
+            } else {
+                await sock.sendMessage(from, { image: { url: mediaUrl }, caption: "Twitter Image" }, { quoted: msg })
+            }
+        }
+
+    } catch (err) {
+        console.error("Twitter DL Error:", err)
+        await sock.sendMessage(from, { text: `❌ Terjadi kesalahan: ${err.message}` }, { quoted: msg })
     }
 }
 
@@ -393,7 +532,9 @@ async function handleMenu(sock, from, msg) {
 .tagall - Tag semua member (visible text)
 .h [teks] - Tag semua member (hidetag/invisible text)
 .s - Buat sticker dari gambar/video
-.dl [link] - Download Instagram/Reels
+.ig [link] - Download Instagram/Reels
+.sc [link] - Download SoundCloud
+.tw [link] - Download Twitter/X
 .yt [link] - Download YouTube
 .rvo - Baca pesan view once
 .del - Hapus pesan bot
